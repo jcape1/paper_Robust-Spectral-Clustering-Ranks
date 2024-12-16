@@ -1,0 +1,140 @@
+---
+title: "RSCR paper code: Robustness and stability in low-dimensional embeddings"
+author: "Joshua Cape (jrcape@wisc.edu)"
+output: html_notebook
+---
+
+## Preamble
+```{r message=FALSE}
+rm(list = ls())
+source("RSCR_preamble.R")
+
+mix_func <- function(mu,sd,eps){
+  alloc <- runif(1) < 1-eps
+  return(alloc*rnorm(1,mean=mu,sd=sd) + (!alloc)*rcauchy(1,location=mu,scale=1))
+}
+```
+
+
+## Asymptotic normality - expectation, clean data, contaminated data, ptr of clean, ptr of contaminated
+```{r}
+set.seed(123)
+  
+dim.mtx <- 1800
+mu.1 <- 2.0; mu.2 <- 0.5; mu.3 <- 1.5; mu.4 <- 1.0; mu.5 <- 2.5; mu.6 <- 0.5
+sd.1 <- 8.0; sd.2 <- 2.0; sd.3 <- 5.0; sd.4 <- 2.0; sd.5 <- 4.0; sd.6 <- 3.0
+
+eps <- 0.01
+
+temp.dim <- dim.mtx/3
+
+mean.mtx <- rbind(c(mu.1,mu.2,mu.3),
+                  c(mu.2,mu.4,mu.5),
+                  c(mu.3,mu.5,mu.6))
+eigen(mean.mtx)
+
+samples.B1 <- matrix(sapply(1:temp.dim^2,function(xxx) rnorm(1,mu.1,sd.1)), nrow=temp.dim, ncol=temp.dim)
+samples.B2 <- matrix(sapply(1:temp.dim^2,function(xxx) rnorm(1,mu.2,sd.2)), nrow=temp.dim, ncol=temp.dim)
+samples.B3 <- matrix(sapply(1:temp.dim^2,function(xxx) rnorm(1,mu.3,sd.3)), nrow=temp.dim, ncol=temp.dim)
+samples.B4 <- matrix(sapply(1:temp.dim^2,function(xxx) rnorm(1,mu.4,sd.4)), nrow=temp.dim, ncol=temp.dim)
+samples.B5 <- matrix(sapply(1:temp.dim^2,function(xxx) rnorm(1,mu.5,sd.5)), nrow=temp.dim, ncol=temp.dim)
+samples.B6 <- matrix(sapply(1:temp.dim^2,function(xxx) rnorm(1,mu.6,sd.6)), nrow=temp.dim, ncol=temp.dim)
+data.mtx <- rbind(cbind(samples.B1, samples.B2, samples.B3),
+                  cbind(samples.B2, samples.B4, samples.B5),
+                  cbind(samples.B3, samples.B5, samples.B6))
+data.mtx[lower.tri(data.mtx,diag=TRUE)] <- 0
+data.mtx <- data.mtx + t(data.mtx)
+
+alloc.mtx <- matrix(runif(dim.mtx^2) < 1-eps, nrow=dim.mtx)
+
+samples.B1.err <- matrix(sapply(1:temp.dim^2,function(xxx) rcauchy(1,mu.1,1)), nrow=temp.dim, ncol=temp.dim)
+samples.B2.err <- matrix(sapply(1:temp.dim^2,function(xxx) rcauchy(1,mu.2,1)), nrow=temp.dim, ncol=temp.dim)
+samples.B3.err <- matrix(sapply(1:temp.dim^2,function(xxx) rcauchy(1,mu.3,1)), nrow=temp.dim, ncol=temp.dim)
+samples.B4.err <- matrix(sapply(1:temp.dim^2,function(xxx) rcauchy(1,mu.4,1)), nrow=temp.dim, ncol=temp.dim)
+samples.B5.err <- matrix(sapply(1:temp.dim^2,function(xxx) rcauchy(1,mu.5,1)), nrow=temp.dim, ncol=temp.dim)
+samples.B6.err <- matrix(sapply(1:temp.dim^2,function(xxx) rcauchy(1,mu.6,1)), nrow=temp.dim, ncol=temp.dim)  
+data.mtx.err <- rbind(cbind(samples.B1.err, samples.B2.err, samples.B3.err),
+                      cbind(samples.B2.err, samples.B4.err, samples.B5.err),
+                      cbind(samples.B3.err, samples.B5.err, samples.B6.err))
+data.mtx.err[lower.tri(data.mtx.err,diag=TRUE)] <- 0
+data.mtx.err <- data.mtx.err + t(data.mtx.err)
+
+data.matix.contam <- alloc.mtx*data.mtx + (!alloc.mtx)*data.mtx.err
+data.matix.contam[lower.tri(data.matix.contam,diag=TRUE)] <- 0
+data.matix.contam <- data.matix.contam + t(data.matix.contam)
+```
+
+
+## Overlay clean spectral embedding with ptr spectral embedding
+```{r message=FALSE}
+# Careful with centroids and B versus Btilde.
+
+library(GGally)
+library(plyr)
+library(scales)
+library(cowplot)
+
+temp.n <- dim.mtx
+temp.props <- rep(1/3,3)
+temp.memb <- sapply(1:length(temp.props),
+                    function(xxx) t(replicate(temp.props[xxx]*temp.n, diag(length(temp.props))[xxx,])))
+manual.ref <- temp.memb
+
+memb.vec <- c(rep(1,dim.mtx/3),rep(2,dim.mtx/3),rep(3,dim.mtx/3))
+
+evec.clean <- eigs(data.mtx,3,"LM")$vectors
+evec.contam <- eigs(data.matix.contam,3,"LM")$vectors
+evec.ptr <- eigs(ptr_func(data.matix.contam),3,"LM")$vectors
+```
+
+
+## Functions
+```{r}
+vmx <- function(data) matrix(as.numeric(varimax(data,normalize=FALSE)$loadings), nrow=dim(data)[1], ncol=dim(data)[2])
+
+pos_orth_align <- function(raw.data,reference.data){
+  temp <- vmx(raw.data)
+  return(sqrt(dim(raw.data)[1]) * temp %*% t(varimax(svd(t(reference.data) %*% temp)$u %*% t(svd(t(reference.data) %*% temp)$v), normalize = FALSE)$loadings))}
+```
+
+
+## Plotting with varimax - alignment to first quadrant
+```{r, message=FALSE, warning=FALSE}
+df.evec.clean.align <- data.frame("coord"=pos_orth_align(evec.clean,manual.ref),"memb"=as.factor(memb.vec),"type"=as.factor(rep("Original",dim.mtx)))
+df.evec.ptr.align <- data.frame("coord"=pos_orth_align(evec.ptr,manual.ref),"memb"=as.factor(memb.vec),"type"=as.factor(rep("PTR",dim.mtx)))
+df.joint.align <- rbind.fill(df.evec.clean.align, df.evec.ptr.align)
+
+my.plot <- 
+  ggpairs(df.joint.align, columns=1:3,
+        mapping=ggplot2::aes(colour=memb:type,alpha=0.5),
+        upper = list(continuous = wrap("cor",size=4)),
+        proportions=c(1,1,1),
+        columnLabels = c("Coord. 1", "Coord. 2", "Coord. 3"),
+        title = "Stability of robust embedding") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n=3)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n=3)) +
+  theme(axis.text = element_text(size = 24),
+        strip.text.x = element_text(size = 20),
+        strip.text.y = element_text(size = 20),
+        title = element_text(size = 24))
+
+my.plot
+```
+
+
+## Save plot
+```{r}
+save_plot(filename = "fig_overlaid_pointclouds.pdf",
+        plot = my.plot,
+        base_height = 6.5,
+        base_width = 8)
+```
+
+
+### Notes on color selection
+```{r}
+palette.colors()
+colorBlindBlack8 <- c("#000000", "#E69F00", "#56B4E9", "#009E73", "#F0E442", "#0072B2", "#D55E00", "#CC79A7")
+pie(rep(1,8),col=colorBlindBlack8)
+```
+

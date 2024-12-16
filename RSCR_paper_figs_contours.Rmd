@@ -1,0 +1,132 @@
+---
+title: "RSCR paper code: Contour plots"
+author: "Joshua Cape (jrcape@wisc.edu)"
+output: html_notebook
+---
+
+## Preamble
+```{r message=FALSE}
+rm(list = ls())
+source("RSCR_preamble.R")
+library(distr)
+library(ks)
+# << for vec(), vech(), invvec(), invvech()
+```
+
+
+## Functions for subspace distances
+```{r eval=FALSE}
+sineTheta_Frob <- function(embed.ptr,embed.raw,embed.pop){
+  sqrt(dim(embed.pop)[2]-norm(t(embed.ptr) %*% embed.pop,"F")^2)/
+    sqrt(dim(embed.pop)[2]-norm(t(embed.raw) %*% embed.pop,"F")^2)}
+
+sineTheta_Op <- function(embed.ptr,embed.raw,embed.pop){
+  sqrt(1-svd(t(embed.ptr) %*% embed.pop)$d[dim(embed.pop)[2]]^2)/
+    sqrt(1-svd(t(embed.raw) %*% embed.pop)$d[dim(embed.pop)[2]]^2)}
+
+max_abs_diff <- function(embed.ptr,embed.raw,embed.pop){
+  max(embed.ptr %*% t(embed.ptr) - embed.pop %*% t(embed.pop))/
+    max(embed.raw %*% t(embed.raw) - embed.pop %*% t(embed.pop))}
+```
+
+
+## Specific model and population-level structure
+```{r eval=FALSE}
+dim.mtx <- 500
+my.K <- 2
+# -----------------------------------------------------
+set.seed(0)
+# -----------------------------------------------------
+myMix <- function(my.mu,my.sd,my.eps,my.scale){
+  return(UnivarMixingDistribution(
+    Norm(mean=my.mu,sd=my.sd), Norm(mean=my.mu,sd=my.scale*my.sd), mixCoeff=c(1-my.eps, my.eps)))}
+
+data_mtx_func <- function(dim.mtx,my.mu1,my.mu2,my.sd1,my.sd2,my.eps,my.scale){
+  temp <- invvech(vech(rbind(cbind(invvec(r(myMix(my.mu1,my.sd1,my.eps,my.scale))(dim.mtx^2/4)),
+                                   matrix(0,nrow=dim.mtx/2,ncol=dim.mtx/2)),
+                             cbind(invvec(r(myMix(my.mu2,my.sd2,my.eps,my.scale))(dim.mtx^2/4)),
+                                   invvec(r(myMix(my.mu1,my.sd1,my.eps,my.scale))(dim.mtx^2/4))))));
+  diag(temp) <- 0;
+  return(temp)}
+# -----------------------------------------------------
+# >> symbolic block-structured population matrix below
+pop.mtx <- rbind(cbind(matrix(2,nrow=dim.mtx/2,ncol=dim.mtx/2),
+                       matrix(1,nrow=dim.mtx/2,ncol=dim.mtx/2)),
+                 cbind(matrix(1,nrow=dim.mtx/2,ncol=dim.mtx/2),
+                       matrix(2,nrow=dim.mtx/2,ncol=dim.mtx/2)))
+diag(pop.mtx) <- 0
+embed.pop <- eigs(pop.mtx,k=my.K,which="LR")$vectors
+# -----------------------------------------------------
+# plotting the SQUARED sine theta ratio
+# -----------------------------------------------------
+my_gen_func <- function(dim.mtx,my.mu1,my.mu2,my.sd1,my.sd2,my.eps,my.scale,my.reps){
+  mean(sapply(1:my.reps, function(xxx){
+    data.mtx <- data_mtx_func(dim.mtx,my.mu1,my.mu2,my.sd1,my.sd2,my.eps,my.scale);
+    return(sineTheta_Frob(eigs(ptr_func(data.mtx),k=my.K,which="LR")$vectors,
+                          eigs(data.mtx,k=my.K,which="LR")$vectors,embed.pop)^2)}))}
+# -----------------------------------------------------
+# start_time <- Sys.time() # <----------
+# tmp.inputs.eps <- c(0.0001,seq(.02,.98,.02),.9999)
+# tmp.inputs.scale <- c(1.0001,seq(1.5,8,.5))
+# tmp.num.reps <- 10
+# tmp.data <- apply(expand.grid(tmp.inputs.eps,tmp.inputs.scale),1,
+#                   function(xxx){return(my_gen_func(dim.mtx,6,4,1/2,1/2,xxx[1],xxx[2],tmp.num.reps))})
+# end_time <- Sys.time() # <----------
+# end_time - start_time # <----------
+# system("say Done")
+# -----------------------------------------------------
+# tmp.df <- cbind(expand.grid(tmp.inputs.eps,tmp.inputs.scale),data.frame(tmp.data))
+# names(tmp.df) <-c("eps","scale","ratio")
+# -----------------------------------------------------
+# -----------------------------------------------------
+
+# --- Parallelizing code below ----
+# library(parallel)
+# library(MASS)
+# start_time <- Sys.time() # <----------
+# tmp.inputs.eps <- c(0.01,seq(.05,.95,.05),.99)
+# tmp.inputs.scale <- c(1.0001,seq(1.5,8,.5))
+# tmp.num.reps <- 50
+# tmp.data <- mclapply(asplit(expand.grid(tmp.inputs.eps,tmp.inputs.scale),1),
+#                   function(xxx){return(my_gen_func(dim.mtx,6,4,1/2,1/2,xxx[1],xxx[2],tmp.num.reps))},
+#                   mc.cores=4)
+# # <<< parallel version of lapply
+# end_time <- Sys.time() # <----------
+# end_time - start_time # <----------
+# system("say Done")
+# 
+# tmp.df <- cbind(expand.grid(tmp.inputs.eps,tmp.inputs.scale),unlist(tmp.data))
+# names(tmp.df) <-c("eps","scale","ratio")
+```
+
+
+## Load simulation data to generate contour plot
+```{r message=FALSE}
+load("data_contours.RData")
+
+library(dplyr)
+library(ggplot2)
+library(knitr)
+tmp.df1 <- tmp.df[between(tmp.df$eps,0,0.81),]
+g <- ggplot(tmp.df1,
+            aes(x=eps, y=scale, z=ratio, width=0.05)) +
+  coord_fixed(1/10) +
+  xlab("Contamination level (epsilon)") + ylab("Variance multiplier (tau)") +
+  geom_tile(aes(fill = ratio)) + labs(fill="Ratio") +
+  stat_contour(color="black",breaks=c(1)) +
+  geom_contour(breaks=c(1), colour = "black", lwd=1) +
+  scale_fill_distiller(palette = "Spectral") +
+  theme(axis.text = element_text(size = 12),
+        title = element_text(size = 12)) +
+  ggtitle("Subspace recovery comparison")
+g
+```
+
+
+## Save contour plot
+```{r}
+pdf(file="fig_contour_ratio.pdf", width=4, height=4)
+  g
+  dev.off()
+plot_crop("fig_contour_ratio.pdf")
+```

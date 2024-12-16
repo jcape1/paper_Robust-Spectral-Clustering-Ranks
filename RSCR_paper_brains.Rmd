@@ -1,0 +1,306 @@
+---
+title: "RSCR paper code: Connectome data"
+author: "Joshua Cape (jrcape@wisc.edu)"
+output: html_notebook
+---
+
+## Preamble, load data, and remove scanner error graph
+```{r message=FALSE}
+rm(list = ls())
+source("RSCR_preamble.R")
+# cf. https://github.com/youngser/TwoTruth
+
+import.dataset.name <- "DS01876"
+
+print(
+  load(
+    url(
+      paste("http://www.cis.jhu.edu/~parky/TT/Data/TT-DS",import.dataset.name,"-glist114-raw.rda", sep=""))))
+
+#Below: remove scanner error graph
+xxx <- unlist(lapply(glist, vcount)); which(xxx == min(xxx)); rm(xxx)
+glist <- glist[-107]; # find and remove technical error graph
+```
+
+
+```{r}
+# Sanity check: each graph is a single connected component
+table(unlist(lapply(glist, is_connected))) # TRUE, 113
+table(unlist(lapply(glist, count_components))) # 1, 113
+```
+
+
+## Description - graph vertices
+```{r}
+# Per-graph vertex counts
+df.vcounts <- melt(data.frame(vcounts = unlist(lapply(glist, vcount))))
+
+# Per-graph median vertex strength
+df.med.str <- melt(data.frame(med.str = sapply(1:length(glist), function(xxx) median(strength(glist[[xxx]])))))
+
+# Per-graph maximum vertex strength
+df.max.str <- melt(data.frame(max.str = sapply(1:length(glist), function(xxx) max(strength(glist[[xxx]])))))
+
+my_plotter <- function(my.df, my.x.lab){
+  ggplot(my.df, aes(x=value, colour=variable)) +
+    geom_histogram(bins=10) +
+    ylim(c(0,30)) + xlab(my.x.lab) + ylab("Graph frequency") +
+    theme(legend.position = "none",
+          legend.text = element_text(size=16),
+          axis.text.x = element_text(size=16, vjust = 0.75, hjust = 0.75),
+          axis.text.y = element_text(size=16),
+          axis.title = element_text(size=16, face="bold"),
+          plot.margin = grid::unit(c(0,0,0,0), "mm"),
+          aspect.ratio = 1) #+ scale_x_continuous(labels = function(xxx) format(xxx, scientific = TRUE))
+}
+
+my_plotter(df.vcounts, "Vertex count")
+```
+
+
+## Save output
+```{r}
+ggsave("fig_ptr_brains_vcounts.pdf",
+       my_plotter(df.vcounts, "Vertex count"),
+       width = 3.5,
+       height = 3.5)
+```
+
+
+## Table of summary statistics
+```{r}
+# Per-graph summary statistics
+func_summary <-
+  function(xxx){return(c(median(xxx), mean(xxx), max(xxx)))}
+
+# Edge weight summary statistics -- median over all graphs
+edge.summary.mtx <-
+  matrix(do.call(rbind, lapply(glist,function(xxx) func_summary(E(xxx)$weight))), nrow = length(glist))
+
+colMedians(edge.summary.mtx)
+
+# Vertex strength summary statistics -- median over all graphs
+strength.summary.mtx <-
+  matrix(do.call(rbind, lapply(glist, function(xxx) func_summary(strength(xxx))
+)), nrow = length(glist))
+
+colMedians(strength.summary.mtx)
+```
+
+
+## Description - box plots of vertex strengths for several graphs
+```{r}
+num.graphs <- 20 # >> if all desired, then use length(glist)
+
+max.vcount <- max(unlist(lapply(glist, vcount)))
+
+graph.strengths <- lapply(1:num.graphs,
+                          function(xxx) strength(glist[[xxx]]))
+graph.strengths <- lapply(1:num.graphs,
+                          function(yyy) append(graph.strengths[[yyy]],
+                                               rep(NA, max.vcount - length(graph.strengths[[yyy]]) + 1)))
+graph.strengths <-
+  do.call("cbind", lapply(1:num.graphs, function(yyy) graph.strengths[[yyy]]))
+               
+my.df <- melt(graph.strengths)
+
+my.boxplot.strengths <- 
+ggplot(my.df, aes(x=factor(Var2),y=value), asp=1) +
+  geom_boxplot(outlier.size = 0.5) +
+  xlab("Index of graph") +
+  ylab("Vertex strength distribution") +
+  scale_x_discrete(limits=paste(seq(1,num.graphs))) +
+  theme(legend.position = "none",
+        legend.text = element_text(size=16),
+        axis.text.x = element_text(size=16),
+        axis.text.y = element_text(size=16),
+        axis.title = element_text(size=16, face="bold"),
+        plot.margin = grid::unit(c(0,0,0,0), "mm")) #+ coord_fixed(ratio=num.graphs/max(na.omit(my.df$value))/2)
+
+my.boxplot.strengths
+```
+
+
+## Save output
+```{r}
+ggsave("fig_ptr_brains_vstrengths.pdf",
+       my.boxplot.strengths,
+       width = 7,
+       height = 3.5)
+```
+
+
+## (approx 8 minutes) Compute Zhu--Ghodsi embedding dimension values
+We apply the Zhu--Ghodsi (ZG) method for dimension selection. We apply the procedure to the top 50 singular values of each data set, dropping the leading (largest) value in the interest of mitigating possible shadowing effects. At the same time, in an effort to compensate for possible over-selection, we leave the ZG value unaltered.
+```{r message=FALSE}
+start_time <- Sys.time() # <--------------------
+
+num.scree <- 50 # max scree index
+
+set.seed(1234)
+
+my.ZG.vals <-
+  lapply(glist,
+         function(xxx)
+           c(dim_select(svdr(xxx[TRUE,TRUE], k=num.scree)$d[-1]),
+             dim_select(svdr(ptr_func(xxx[TRUE,TRUE]), k=num.scree)$d[-1])))
+
+my.ZG.vals <- do.call(rbind,my.ZG.vals)
+
+table(my.ZG.vals[,1] - my.ZG.vals[,2])
+
+end_time <- Sys.time() # <----------------------
+end_time - start_time
+system("say Done")
+```
+
+
+## Compare ZG values between raw data embedding and ptr embedding
+```{r}
+temp.df <- data.frame(my.ZG.vals)
+
+plot.raw.vs.ptr.embed.dim <-
+  ggplot(temp.df, aes(X1, X2)) +
+  geom_count(aes(size = ..n..)) +
+  geom_abline(slope=1, linetype="dashed") +
+  scale_size_continuous(name = "counts") +
+  xlim(min(my.ZG.vals), max(my.ZG.vals)) +
+  ylim(min(my.ZG.vals), max(my.ZG.vals)) +
+  xlab("Raw embedding dimension") +
+  ylab("PTR embedding dimension") +
+  coord_fixed() +
+     theme(legend.justification = c(1, 1),
+          legend.position = "none",
+          legend.key.size = unit(1, 'cm'),
+          legend.text = element_text(size=16),
+          legend.title = element_blank(),
+          axis.text.x = element_text(size=16),
+          axis.text.y = element_text(size=16),
+          axis.title=element_text(size=16,face="bold"))
+
+plot.raw.vs.ptr.embed.dim
+
+rm(temp.df)
+```
+
+
+### Generate pdf output image
+```{r}
+ggsave("fig_ptr_brains_dhats.pdf",
+       plot.raw.vs.ptr.embed.dim,
+       width = 3.5,
+       height = 3.5)
+```
+
+
+## Save truncated eigendecompositions of A and PTR(A)
+```{r message=FALSE}
+start_time <- Sys.time() # <-----------------------
+
+  # >> uses input "my.ZG.vals"
+
+  num.true.clust <- 4
+
+  raw.evec.list <- list()
+  ptr.evec.list <- list()
+  
+  set.seed(1234)
+  
+  for(g.index in 1:length(glist)){
+      my.graph <- glist[[g.index]]
+      my.adj <- my.graph[TRUE,TRUE]
+      
+      raw.evec.list[[g.index]] <- svdr(my.adj, k = my.ZG.vals[g.index,1])$u
+      ptr.evec.list[[g.index]] <- svdr(ptr_func(my.adj), k = my.ZG.vals[g.index,2])$u
+     
+  }
+  
+end_time <- Sys.time() # <-----------------------
+
+end_time - start_time # <-----------------------
+
+system("say Done")
+
+```
+
+
+## Plot average ARI across replicates of k-means clustering
+```{r}
+
+set.seed(1234)
+n.reps <- 100
+
+raw.evec.kmean.ARI.data.func <- function(yyy)
+  lapply(1:length(glist),
+         function(xxx)
+           adjustedRandIndex(kmeans(raw.evec.list[[xxx]], num.true.clust)$cluster,
+                             V(glist[[xxx]])$Y))
+ptr.evec.kmean.ARI.data.func <- function(yyy)
+  lapply(1:length(glist),
+         function(xxx)
+           adjustedRandIndex(kmeans(ptr.evec.list[[xxx]], num.true.clust)$cluster,
+                             V(glist[[xxx]])$Y))
+
+raw.evec.kmean.ARI.data <- lapply(1:n.reps, raw.evec.kmean.ARI.data.func)
+ptr.evec.kmean.ARI.data <- lapply(1:n.reps, ptr.evec.kmean.ARI.data.func)
+
+raw.evec.kmean.ARI.traj <-
+  colMeans(matrix(unlist(do.call(rbind, raw.evec.kmean.ARI.data)), nrow = n.reps))
+ptr.evec.kmean.ARI.traj <-
+  colMeans(matrix(unlist(do.call(rbind, ptr.evec.kmean.ARI.data)), nrow = n.reps))
+
+
+plot(ptr.evec.kmean.ARI.traj, ylim = c(0,0.2),
+     type="l",
+     col="blue",
+     xlab = "Index of graph",
+     ylab = "Average ARI")
+lines(raw.evec.kmean.ARI.traj, ylim = c(0,0.2),
+      type="l",
+      col="red")
+
+
+
+my.data.list <- list()
+
+for(iii in 1:length(glist)){
+      my.data.list[[iii]] <-
+        c(iii,
+          raw.evec.kmean.ARI.traj[iii],
+          ptr.evec.kmean.ARI.traj[iii])
+      names(my.data.list[[iii]]) <-
+        c('g.index',
+          'raw.km.ARI',
+          'ptr.km.ARI')
+}
+
+my.ARI.data <- as.data.frame(do.call("rbind", lapply(my.data.list, function(xxx) xxx)))
+my.ARI.data <- melt(my.ARI.data, id.vars = 'g.index', variable.name = 'series')
+
+plot.raw.vs.ptr.brains.ARI.km <-
+  ggplot(my.ARI.data, aes(g.index, value)) +
+  geom_line(aes(colour = series), size=1) +
+  scale_color_manual(labels=c("Raw, k-means","PTR, k-means"), values=ggplotColours(2)) +
+  scale_x_discrete(limits=c(1,seq(10,length(glist),by=10))) + ylim(0,0.20) +
+  xlab("Index of graph") + ylab("Adjusted Rand index") +
+   theme(legend.justification = c(1, 1),
+        legend.position = c(1,1),
+        legend.direction = "horizontal",
+        legend.key.size = unit(1, 'cm'),
+        legend.text = element_text(size=16),
+        legend.title = element_blank(),
+        axis.text.x = element_text(size=16),
+        axis.text.y = element_text(size=16),
+        axis.title=element_text(size=16,face="bold"))
+
+plot.raw.vs.ptr.brains.ARI.km
+
+```
+## Save plot of average ARI
+```{r}
+ggsave("fig_ptr_brains_ARI_kmeans.pdf",
+       plot.raw.vs.ptr.brains.ARI.km,
+       width = 7,
+       height = 3.5)
+```
+

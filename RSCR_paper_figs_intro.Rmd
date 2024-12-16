@@ -1,0 +1,140 @@
+---
+title: "RSCR paper code: Introductory figure"
+author: "Joshua Cape (jrcape@wisc.edu)"
+output: html_notebook
+---
+
+## Preamble
+```{r message=FALSE}
+rm(list = ls())
+source("RSCR_preamble.R")
+
+mix_func <- function(mu,sd,eps){
+  alloc <- runif(1) < 1-eps
+  return(alloc*rnorm(1,mean=mu,sd=sd) + (!alloc)*rnorm(1,mu,100*sd))}
+  
+library(knitr)
+```
+
+
+## Blockwise contaminated normal data
+NB: naively generates IID entries, then symmetrizes.
+```{r}
+set.seed(0)
+
+temp.eps <- 0.01
+
+temp.n <- 1000
+temp.props <- c(1/2,1/2)
+temp.B <- rbind(c(2,1),c(1,2))
+temp.sd <- 3
+# (automated below)
+temp.memb <- sapply(1:length(temp.props),
+                    function(xxx) t(replicate(temp.props[xxx]*temp.n, diag(length(temp.props))[xxx,])))
+temp.K <- length(temp.props)
+temp.pop.mtx <- temp.memb %*% temp.B %*% t(temp.memb)
+temp.data.raw <- matrix(sapply(temp.pop.mtx, function(xxx) mix_func(xxx,temp.sd,temp.eps)), nrow=temp.n)
+  
+data.mtx <- temp.data.raw
+data.mtx[lower.tri(data.mtx,diag=TRUE)] <- 0
+data.mtx <- data.mtx + t(data.mtx)
+
+dim.mtx <- temp.n
+mu.1 <- temp.B[1,1]
+mu.2 <- temp.B[1,2]
+mu.3 <- temp.B[2,2]
+eps <- temp.eps
+```
+
+
+## Eigenvector computation
+(i) noiseless ground truth, (ii) raw data, (iii) ptr matrix
+```{r}
+temp.range <- c(-2,2)
+
+    pop.vec1 <- c(rep(1,dim.mtx/2),rep(1,dim.mtx/2))
+    pop.vec2 <- c(rep(1,dim.mtx/2),rep(-1,dim.mtx/2))
+
+my_signed_median <- function(input){return(input*sign(median(input)))} # sign flip via median
+my_signed_vec2 <- function(input){return(input*sign(input*pop.vec2))}
+  
+  embed.raw <- sqrt(dim.mtx)*eigs(data.mtx,4,"LR")$vectors
+  
+  embed.ptr <- sqrt(dim.mtx)*eigs(ptr_func(data.mtx),2,"LR")$vectors
+  embed.ptr[,1] <- my_signed_median(embed.ptr[,1])
+  embed.ptr[,2] <- my_signed_vec2(embed.ptr[,2])
+  
+my.ylab <- "Value"
+my.xlab1 <- "Entry (node index)"
+my.xlab2 <- "Entry (node index)"
+my.pch <- 20
+my.col.pts <- "gray"
+my.col.l <- "blue"
+my.lwd <- 4
+```
+
+
+## Eigenvalue computation - method selects largest real part
+```{r}
+set.length = 10
+  
+  evals.pop <- eigs(temp.pop.mtx, set.length, "LR")$values
+  evals.raw <- eigs(data.mtx, set.length, "LR")$values
+  evals.ptr <- eigs(ptr_func(data.mtx), set.length, "LR")$values
+
+mys.xlab <- "Eigenvalue index"
+mys.ylab <- "Value"
+mys.pch <- 20
+mys.lwd <- 3
+mys.col.pts <- "gray"
+mys.col.l <- "black"
+mys.cex <- 2
+
+mys.cex.axis <- 1.5
+mys.cex.lab <- 1.5
+mys.cex.main <- 1.5
+```
+
+
+## Save and print - scree plots
+```{r}
+pdf(file="fig_intro_scree.pdf", width=8, height=4)
+par(mfrow = c(1, 2))
+plot(evals.raw/dim.mtx, ylim=c(-0.0001,max(evals.raw/dim.mtx)), main="Scree plot of data matrix",
+xlab=mys.xlab, ylab=mys.ylab, pch=mys.pch, col=mys.col.pts, cex=mys.cex, las=1, cex.axis=mys.cex.axis, cex.lab=mys.cex.lab, cex.main=mys.cex.main)
+abline(h=0, col=mys.col.l, lwd=mys.lwd)
+    
+plot(evals.ptr/dim.mtx, ylim=c(-0.0001,max(evals.ptr/dim.mtx)), main="Scree plot of PTR matrix",
+xlab=mys.xlab, ylab=mys.ylab, pch=mys.pch, col=mys.col.pts, cex=mys.cex, las=1, cex.axis=mys.cex.axis, cex.lab=mys.cex.lab, cex.main=mys.cex.main)
+abline(h=0, col=mys.col.l, lwd=mys.lwd)
+dev.off()
+#plot_crop("fig_intro_scree.pdf")
+```
+
+
+### Save and print - top eigenvector, raw and ptr side-by-side
+```{r message=FALSE}
+pdf(file="fig_intro_evec1.pdf", width=8, height=4)
+par(mfrow = c(1, 2))
+plot(my_signed_median(embed.raw[,1]), main="1st eigenvector of data matrix", ylim=temp.range, ylab=my.ylab, xlab=my.xlab1, pch=my.pch, col=my.col.pts, las=1, cex.axis=mys.cex.axis, cex.lab=mys.cex.lab, cex.main=mys.cex.main)
+lines(1:dim.mtx,rep(1,dim.mtx),type="l",col=my.col.l,lwd=my.lwd)    
+
+plot(embed.ptr[,1], main="1st eigenvector of PTR matrix", ylim=temp.range, ylab=my.ylab, xlab=my.xlab1, pch=my.pch, col=my.col.pts, las=1, cex.axis=mys.cex.axis, cex.lab=mys.cex.lab, cex.main=mys.cex.main)
+lines(1:dim.mtx,rep(1,dim.mtx),type="l",col=my.col.l,lwd=my.lwd)   
+dev.off()
+```
+
+
+### Save and print - second eigenvector, raw and ptr side-by-side
+```{r}
+pdf(file="fig_intro_evec2.pdf", width=8, height=4)
+par(mfrow = c(1, 2))
+plot(my_signed_median(embed.raw[,2]), main="2nd eigenvector of data matrix", ylim=temp.range, ylab=my.ylab, xlab=my.xlab2, pch=my.pch, col=my.col.pts, las=1, cex.axis=mys.cex.axis, cex.lab=mys.cex.lab, cex.main=mys.cex.main)
+lines(1:(dim.mtx/2),rep(1,dim.mtx/2),type="l",col=my.col.l,lwd=my.lwd)
+lines((dim.mtx/2+1):dim.mtx,rep(-1,dim.mtx/2),type="l",col=my.col.l,lwd=my.lwd)
+
+plot(embed.ptr[,2], main="2nd eigenvector of PTR matrix", ylim=temp.range, ylab=my.ylab, xlab=my.xlab2, pch=my.pch, col=my.col.pts, las=1, cex.axis=mys.cex.axis, cex.lab=mys.cex.lab, cex.main=mys.cex.main)
+lines(1:(dim.mtx/2),rep(1,dim.mtx/2),type="l",col=my.col.l,lwd=my.lwd)
+lines((dim.mtx/2+1):dim.mtx,rep(-1,dim.mtx/2),type="l",col=my.col.l,lwd=my.lwd)
+dev.off()
+```

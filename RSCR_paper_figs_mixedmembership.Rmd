@@ -1,0 +1,59 @@
+---
+title: "RSCR paper code: Mixed membership example"
+author: "Joshua Cape (jrcape@wisc.edu)"
+output: html_notebook
+---
+
+## Mixed membership simulation
+```{r message=FALSE}
+rm(list = ls())
+source("RSCR_preamble.R")
+
+library(DirichletReg)
+library(matrixcalc)
+library(ks)
+
+set.seed(1234)
+
+my.loc <- 0 # << median of noise distribution
+my.scale <- 1/2 # << sd of noise distribution
+
+dim.mtx <- 1800
+alpha.vec <- c(1/2,1/3,1/6)
+rank.d <- length(alpha.vec)
+
+B.mtx <- rbind(c(3,2,1),
+               c(2,2,1),
+               c(1,1,1))
+
+    Z.mtx <- rbind(diag(rank.d),rdirichlet(dim.mtx,alpha.vec)[1:(dim.mtx-rank.d),])
+
+    noise.mtx <- matrix(rnorm(dim.mtx * dim.mtx, mean = my.loc, sd = my.scale), nrow=dim.mtx) 
+    data.mtx <- Z.mtx %*% B.mtx %*% t(Z.mtx) + invvech(vech(noise.mtx))
+
+    trunc.Zmtx <- sqrt(dim.mtx)*svdr(Z.mtx, k=rank.d)$u
+    trunc.orig <- sqrt(dim.mtx)*svdr(data.mtx, k=rank.d)$u
+    trunc.ptr <- sqrt(dim.mtx)*svdr(ptr_func(data.mtx), k=rank.d)$u
+
+mys.cex.main <- 1.5
+      
+#pdf(file="fig_mmbm_ptr.pdf", width=8, height=4)
+  par(mfrow = c(1, 2))
+  
+  par(cex.axis=1.5)
+  plot(varimax(trunc.Zmtx,normalize = FALSE)$loadings[,1:2], xlab="", ylab="", main="Latent mixed membership", las=1, xaxt="n", yaxt="n", asp=1/2, cex.main=mys.cex.main)
+  axis(side=1, at=seq(0,2,1))
+  axis(side=2, at=seq(0,2,1))
+  par(cex.axis=1)
+  
+  par(cex.axis=1.5)
+  plot(varimax(trunc.ptr,normalize = FALSE)$loadings[,1:2], xlab="", ylab="", main="Rank-based embedding", las=1, xaxt="n", yaxt="n", asp=1/2, cex.main=mys.cex.main)
+  axis(side=1, at=seq(0,2,1))
+  axis(side=2, at=seq(0,2,1))
+  par(cex.axis=1)
+  
+#  dev.off()
+#plot_crop("fig_mmbm_ptr.pdf")
+```
+
+

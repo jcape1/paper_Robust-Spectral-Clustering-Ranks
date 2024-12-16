@@ -1,0 +1,190 @@
+---
+title: "RSCR paper code: Pareto distributions"
+author: "Joshua Cape (jrcape@wisc.edu)"
+output: html_notebook
+---
+
+## Preamble
+```{r message=FALSE}
+rm(list = ls())
+source("RSCR_preamble.R")
+```
+
+
+## Setup
+```{r}
+# Function gets Pareto distribution parameters for given inputs.
+# NB: Here, k is our m, and alpha is our gamma.
+param_pareto <- function(k,alpha){
+  temp <- c(if(alpha > 1) alpha*k/(alpha-1) else Inf,
+           k*sqrt(2)^alpha,
+           k,
+           if(alpha > 2) (alpha*k^2)/((alpha-1)^2*(alpha-2)) else Inf)
+  names(temp) <- c("mean","median","mode","var")
+  return(temp)}
+
+# Examples of evaluating the parameter function:
+param_pareto(1,1)
+param_pareto(2,2)
+param_pareto(3,3)
+```
+
+
+## Two-block model example
+```{r message=FALSE}
+library(EnvStats) # package to load function "rpareto()"
+
+set.seed(1234)
+  
+dim.mtx <- 400
+eta.1 <- 1; eta.2 <- 2; eta.3 <- 3; # >> equiv., k; m; (mode)
+theta.1 <- 1; theta.2 <- 2; theta.3 <- 3 # >> equiv., alpha; gamma
+
+pi1 <- 1/4;
+pi2 <- 1-pi1;
+
+memb.vec <- c(rep(1,pi1*dim.mtx), rep(2,pi2*dim.mtx))
+
+samples.B1 <- matrix(rpareto(dim.mtx^2*pi1^2,eta.1,theta.1), nrow=dim.mtx*pi1, ncol=dim.mtx*pi1)
+samples.B2 <- matrix(rpareto(dim.mtx^2*pi1*pi2,eta.2,theta.2), nrow=dim.mtx*pi1, ncol=dim.mtx*pi2)
+samples.B3 <- matrix(rpareto(dim.mtx^2*pi2^2,eta.3,theta.3), nrow=dim.mtx*pi2, ncol=dim.mtx*pi2)
+
+data.mtx <- rbind(cbind(samples.B1, samples.B2), cbind(t(samples.B2), samples.B3)) # << transpose!
+data.mtx[lower.tri(data.mtx,diag=TRUE)] <- 0
+data.mtx <- data.mtx + t(data.mtx)
+```
+
+
+## Plot the raw data matrix
+```{r}
+# https://rpubs.com/lgadar/matrix-visualizations
+library(reshape2)
+library(ggplot2)
+library(knitr)
+library(dplyr)
+
+longData.raw <- melt(data.mtx)
+longData.raw$value[!between(longData.raw$value,quantile(vech(data.mtx),0.01), quantile(vech(data.mtx),0.99))] <- NA
+longData.raw$value[longData.raw$Var1==longData.raw$Var2] <- 0 # modify diagonal
+
+raster.raw <- 
+  ggplot(longData.raw, aes(x = Var2, y = dim.mtx - Var1)) +
+    geom_raster(aes(fill=value)) + 
+    labs(x="Column", y="Row", title="Matrix of raw data", fill="Value") +
+    coord_equal() +
+    scale_fill_gradient(low="white", high="black", na.value = "brown") +
+    theme_bw() + theme(axis.text.x=element_text(size=0, angle=0, vjust=0.3),
+                       axis.text.y=element_text(size=0),
+                       plot.title=element_text(size=14, hjust=0.5),
+                       axis.title.x=element_text(size=14),
+                       axis.title.y=element_text(size=14))
+raster.raw
+```
+
+
+## Save plot of raw data
+```{r}
+save_plot(filename = "fig_pareto_raster_raw.pdf",
+        plot = raster.raw,
+        base_height = 4,
+        base_width = 4)
+plot_crop("fig_pareto_raster_raw.pdf")
+```
+
+
+## Plot the matrix of normalized ranks
+```{r}
+longData.ptr <- melt(ptr_func(data.mtx))
+
+raster.ptr <- 
+  ggplot(longData.ptr, aes(x = Var2, y = dim.mtx - Var1)) +
+    geom_raster(aes(fill=value)) + 
+    labs(x="Column", y="Row", title="Matrix of normalized ranks", fill="Value") +
+    coord_equal() +
+    scale_fill_gradient(low="white", high="black") +
+    theme_bw() + theme(axis.text.x=element_text(size=0, angle=0, vjust=0.3),
+                       axis.text.y=element_text(size=0),
+                       plot.title=element_text(size=14, hjust=0.5),
+                       axis.title.x=element_text(size=14),
+                       axis.title.y=element_text(size=14))
+raster.ptr
+```
+
+
+## Save plot of normalized ranks
+```{r}
+save_plot(filename = "fig_pareto_raster_ptr.pdf",
+        plot = raster.ptr,
+        base_height = 4,
+        base_width = 4)
+plot_crop("fig_pareto_raster_ptr.pdf")
+```
+
+
+## Save image of side-by-side matrices
+```{r}
+my.joint.raster <- plot_grid(raster.raw, raster.ptr, nrow = 1, ncol = 2)
+my.joint.raster
+
+save_plot(filename = "fig_pareto_raster.pdf",
+        plot = my.joint.raster,
+        base_height = 4,
+        base_width = 8)
+plot_crop("fig_pareto_raster.pdf")
+```
+
+
+## Plot the embeddings: Raw data gives left plot, PTR gives right plot.
+```{r}
+library(ggplot2)
+library(GGally)
+library(ggpubr)
+library(cowplot)
+library(scales)
+
+num.cols <- 4
+df.raw <- data.frame(coord=sqrt(dim.mtx)*eigs(data.mtx,num.cols,"LM")$vectors, memb=factor(memb.vec))
+df.ptr <- data.frame(coord=sqrt(dim.mtx)*eigs(ptr_func(data.mtx),num.cols,"LM")$vectors, memb=factor(memb.vec))
+gg.raw <- ggpairs(df.raw,
+                  columns=1:num.cols,
+                  aes(colour=memb,shape=memb,alpha=0.5),
+                  progress=FALSE,
+                  upper=list(continuous="points"),
+                  columnLabels = c("Coord. 1", "Coord. 2", "Coord. 3", "Coord. 4"),
+                  title="(A) Non-robust embedding") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n=3)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n=3)) +
+  theme(axis.text = element_text(size = 11),
+        strip.text.x = element_text(size = 11),
+        strip.text.y = element_text(size = 11),
+        title = element_text(size = 14))
+gg.raw
+
+gg.ptr <- ggpairs(df.ptr,
+                  columns=1:num.cols,
+                  aes(color=memb,shape=memb,alpha=0.5),
+                  progress=FALSE,
+                  upper=list(continuous="points"),
+                  columnLabels = c("Coord. 1", "Coord. 2", "Coord. 3", "Coord. 4"),
+                  title="(B) Robust embedding") +
+  scale_x_continuous(breaks = scales::pretty_breaks(n=3)) +
+  scale_y_continuous(breaks = scales::pretty_breaks(n=3)) +
+  theme(axis.text = element_text(size = 11),
+        strip.text.x = element_text(size = 11),
+        strip.text.y = element_text(size = 11),
+        title = element_text(size = 14))
+gg.ptr
+
+my.joint.plot <- plot_grid(ggmatrix_gtable(gg.raw), ggmatrix_gtable(gg.ptr), nrow = 1, ncol = 2)
+my.joint.plot
+```
+
+
+# Save joint plot of embeddings
+```{r}
+save_plot(filename = "fig_pareto_embed.pdf",
+        plot = my.joint.plot,
+        base_height = 4,
+        base_width = 8)
+```
+
